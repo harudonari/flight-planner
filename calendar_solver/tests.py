@@ -1,7 +1,8 @@
 # Tests for solver.py
 import pytest
 import datetime
-from solver import is_weekend, get_us_federal_holidays, is_vacation_day, count_vacation_days, parse_constraints
+from solver import is_weekend, get_us_federal_holidays, is_vacation_day, count_vacation_days, parse_constraints, is_weekend_anchored, generate_windows
+
 
 @pytest.fixture
 def valid_raw():
@@ -26,6 +27,22 @@ def valid_raw():
         "earliest_start": "2026-05-01",
         "latest_end": "2026-12-31"
     }
+
+@pytest.fixture
+def valid_constraints():
+    return parse_constraints({
+        "vacation_days_remaining": 10,
+        "year": 2026,
+        "trips": [
+            {"id": "trip1",
+            "destination": "Chicago",
+            "departure_cities": ["NYC", "LAX"],
+            "min_duration_days": 4
+        }],
+        "blackout_dates": ["2026-01-01", "2026-12-25", "2026-05-08"],
+        "earliest_start": "2026-05-01",
+        "latest_end": "2026-05-31"
+    })
 
 def test_is_weekend_for_weekdays():
     assert not is_weekend(datetime.date(2024, 1, 1))  # Monday
@@ -296,3 +313,68 @@ def test_parse_constraints_invalid_latest_end_format(valid_raw):
 def test_constraints_invalid_earliest_start_after_latest_end(valid_raw):
     with pytest.raises(ValueError, match="earliest_start must be before latest_end"):
         parse_constraints({**valid_raw, "earliest_start": "2026-12-31", "latest_end": "2026-05-01"})
+
+def test_is_weekend_anchored_start_on_friday():
+    assert is_weekend_anchored(datetime.date(2026, 5, 1), datetime.date(2026, 5, 6))  # Starts on Friday
+
+def test_is_weekend_anchored_start_on_saturday():
+    assert is_weekend_anchored(datetime.date(2026, 5, 2), datetime.date(2026, 5, 7))  # Starts on Saturday
+
+def test_is_weekend_anchored_end_on_sunday():
+    assert is_weekend_anchored(datetime.date(2026, 5, 7), datetime.date(2026, 5, 10))  # Ends on Sunday    
+
+def test_is_weekend_anchored_end_on_monday():
+    assert is_weekend_anchored(datetime.date(2026, 5, 7), datetime.date(2026, 5, 11))  # Ends on Monday
+
+def test_is_weekend_anchored_not_weekend_anchored():
+    assert not is_weekend_anchored(datetime.date(2026, 5, 6), datetime.date(2026, 5, 9))  # Starts on Wednesday, ends on Saturday
+
+def test_generate_windows_basic(valid_constraints):
+    holidays = get_us_federal_holidays(valid_constraints.year)
+    windows = generate_windows(valid_constraints.trips[0], valid_constraints, holidays)
+    assert len(windows) > 0
+
+def test_generate_windows_include_fri_to_mon(valid_constraints):
+    holidays = get_us_federal_holidays(valid_constraints.year)
+    windows = generate_windows(valid_constraints.trips[0], valid_constraints, holidays)
+    assert any(window.start_date.weekday() == 4 and window.end_date.weekday() == 0 for window in windows)  # Fri to Mon
+
+def test_generate_windows_exclude_blackout_date(valid_constraints):
+    holidays = get_us_federal_holidays(valid_constraints.year)
+    windows = generate_windows(valid_constraints.trips[0], valid_constraints, holidays)
+    for window in windows:
+        assert datetime.date(2026, 5, 8) not in (window.start_date + datetime.timedelta(days=i) for i in range(window.total_days))
+
+def test_generate_windows_weekend_anchored(valid_constraints):
+    holidays = get_us_federal_holidays(valid_constraints.year)
+    windows = generate_windows(valid_constraints.trips[0], valid_constraints, holidays)
+    for window in windows:
+        if window.weekend_anchored:
+            assert window.start_date.weekday() in (4, 5) or window.end_date.weekday() in (6, 0)
+
+def test_generate_windows_overlaps_holiday(valid_constraints):
+    holidays = get_us_federal_holidays(valid_constraints.year)
+    windows = generate_windows(valid_constraints.trips[0], valid_constraints, holidays)
+    for window in windows:
+        if window.overlaps_holiday:
+            assert any((window.start_date + datetime.timedelta(days=i)) in holidays for i in range(window.total_days))
+
+def test_generate_windows_vacation_days_cost(valid_constraints):
+    holidays = get_us_federal_holidays(valid_constraints.year)
+    windows = generate_windows(valid_constraints.trips[0], valid_constraints, holidays)
+    for window in windows:
+        expected_cost = count_vacation_days(window.start_date, window.end_date, holidays)
+        assert window.vacation_days_cost == expected_cost
+
+def test_generate_windows_total_days(valid_constraints):
+    holidays = get_us_federal_holidays(valid_constraints.year)
+    windows = generate_windows(valid_constraints.trips[0], valid_constraints, holidays)
+    for window in windows:
+        assert window.total_days == valid_constraints.trips[0].min_duration_days
+
+def test_generate_windows_valid_window(valid_constraints):
+    holidays = get_us_federal_holidays(valid_constraints.year)
+    windows = generate_windows(valid_constraints.trips[0], valid_constraints, holidays)
+    for window in windows:
+        assert window.start_date >= valid_constraints.earliest_start
+        assert window.end_date <= valid_constraints.latest_end
