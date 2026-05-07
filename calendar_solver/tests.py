@@ -1,7 +1,7 @@
 # Tests for solver.py
 import pytest
 import datetime
-from solver import is_weekend, get_us_federal_holidays, is_vacation_day, count_vacation_days, parse_constraints, is_weekend_anchored, generate_windows
+from solver import *
 
 
 @pytest.fixture
@@ -43,6 +43,56 @@ def valid_constraints():
         "earliest_start": "2026-05-01",
         "latest_end": "2026-05-31"
     })
+
+@pytest.fixture
+def small_constraints():
+    return SolverConstraints(
+        vacation_days_remaining=10,
+        year=2026,
+        trips=[
+            TripConstraint(
+                id="trip1",
+                destination="Chicago",
+                departure_cities=["NYC", "LAX"],
+                min_duration_days=3
+            )
+        ],
+        blackout_dates={datetime.date(2026, 1, 1), datetime.date(2026, 12, 25), datetime.date(2026, 5, 6)},
+        earliest_start=datetime.date(2026, 5, 1),
+        latest_end=datetime.date(2026, 5, 7),
+        max_trips=None
+    )
+
+@pytest.fixture
+def valid_windows_one_to_seventh():
+    return [
+        Window(
+            trip_id="trip1",
+            start_date=datetime.date(2026, 5, 1),
+            end_date=datetime.date(2026, 5, 3),
+            vacation_days_cost=1,
+            weekend_anchored=True,
+            overlaps_holiday=False,
+            total_days=3
+        ),
+        Window(
+            trip_id="trip1",
+            start_date=datetime.date(2026, 5, 2),
+            end_date=datetime.date(2026, 5, 4),
+            vacation_days_cost=1,
+            weekend_anchored=True,
+            overlaps_holiday=False,
+            total_days=3
+        ),
+        Window(
+            trip_id="trip1",
+            start_date=datetime.date(2026, 5, 3),
+            end_date=datetime.date(2026, 5, 5),
+            vacation_days_cost=2,
+            weekend_anchored=False,
+            overlaps_holiday=False,
+            total_days=3
+    )]
 
 def test_is_weekend_for_weekdays():
     assert not is_weekend(datetime.date(2024, 1, 1))  # Monday
@@ -136,6 +186,10 @@ def test_parse_constraints_invalid_max_trips_not_integer(valid_raw):
     with pytest.raises(ValueError, match="max_trips must be a positive integer if provided"):
         parse_constraints({**valid_raw, "max_trips": "not an integer"})
 
+def test_parse_constraints_invalid_max_trips_bool(valid_raw):
+    with pytest.raises(ValueError, match="max_trips must be a positive integer if provided"):
+        parse_constraints({**valid_raw, "max_trips": True})
+
 def test_parse_constraints_invalid_max_trips_zero(valid_raw):
     with pytest.raises(ValueError, match="max_trips must be a positive integer if provided"):
         parse_constraints({**valid_raw, "max_trips": 0})
@@ -156,6 +210,10 @@ def test_parse_constraints_invalid_vacation_days_remaining_negative(valid_raw):
 def test_parse_constraints_invalid_vacation_days_remaining_not_integer(valid_raw):
     with pytest.raises(ValueError, match="vacation_days_remaining must be a non-negative integer"):
         parse_constraints({**valid_raw, "vacation_days_remaining": 2.5})
+
+def test_parse_constraints_invalid_vacation_days_remaining_bool(valid_raw):
+    with pytest.raises(ValueError, match="vacation_days_remaining must be a non-negative integer"):
+        parse_constraints({**valid_raw, "vacation_days_remaining": True})
 
 def test_parse_constraints_vacation_days_remaining_zero(valid_raw):
     result = parse_constraints({**valid_raw, "vacation_days_remaining": 0})
@@ -178,7 +236,11 @@ def test_parse_constraints_invalid_year_future(valid_raw):
 def test_parse_constraints_invalid_year_not_integer(valid_raw):
     with pytest.raises(ValueError, match="year must be a valid year between 1900 and 10 years from now"):
         parse_constraints({**valid_raw, "year": "not an integer"})
-    
+
+def test_parse_constraints_invalid_year_bool(valid_raw):
+    with pytest.raises(ValueError, match="year must be a valid year between 1900 and 10 years from now"):
+        parse_constraints({**valid_raw, "year": True})
+
 def test_parse_constraints_missing_trips(valid_raw):
     del valid_raw["trips"]
     with pytest.raises(ValueError, match="Missing required field: trips"):
@@ -277,6 +339,15 @@ def test_parse_constraints_invalid_trip_min_duration_days_not_integer(valid_raw)
             "destination": "Tokyo",
             "departure_cities": ["NYC", "LAX"],
             "min_duration_days": 2.5
+        }]})
+
+def test_parse_constraints_invalid_trip_min_duration_days_bool(valid_raw):
+    with pytest.raises(ValueError, match="Trip trip1 must have a positive integer min_duration_days"):
+        parse_constraints({**valid_raw, "trips": [{
+            "id": "trip1",
+            "destination": "Tokyo",
+            "departure_cities": ["NYC", "LAX"],
+            "min_duration_days": True
         }]})
 
 def test_parse_constraints_invalid_blackout_dates_invalid_date_format(valid_raw):
@@ -378,3 +449,86 @@ def test_generate_windows_valid_window(valid_constraints):
     for window in windows:
         assert window.start_date >= valid_constraints.earliest_start
         assert window.end_date <= valid_constraints.latest_end
+
+def test_generate_windows_min_duration_exceeds_range(small_constraints):
+    # Trip is longer than the entire search window
+    long_trip = TripConstraint(id="trip1", destination="X", departure_cities=["A"], min_duration_days=100)
+    holidays = get_us_federal_holidays(small_constraints.year)
+    assert generate_windows(long_trip, small_constraints, holidays) == []
+
+def test_generate_windows_blackout_at_start(small_constraints):
+    # Blackout on earliest_start — pointer should advance past it
+    blocked = SolverConstraints(**{**small_constraints.__dict__, 
+        "blackout_dates": {small_constraints.earliest_start}})
+    holidays = get_us_federal_holidays(small_constraints.year)
+    windows = generate_windows(small_constraints.trips[0], blocked, holidays)
+    for w in windows:
+        assert w.start_date > small_constraints.earliest_start
+
+def test_generate_windows_all_dates_blacked_out(small_constraints):
+    all_dates = {small_constraints.earliest_start + datetime.timedelta(days=i) 
+                 for i in range((small_constraints.latest_end - small_constraints.earliest_start).days + 1)}
+    blocked = SolverConstraints(**{**small_constraints.__dict__, "blackout_dates": all_dates})
+    holidays = get_us_federal_holidays(small_constraints.year)
+    assert generate_windows(small_constraints.trips[0], blocked, holidays) == []
+
+def test_score_window_valid_score_clamping(small_constraints):
+    holidays = get_us_federal_holidays(small_constraints.year)
+    windows = generate_windows(small_constraints.trips[0], small_constraints, holidays)
+    for window in windows:
+        score = score_window(window, small_constraints.earliest_start, small_constraints.latest_end)
+        assert 0.0 <= score <= 1.0
+
+def test_score_window_correct_score(valid_windows_one_to_seventh):
+    earliest_start = datetime.date(2026, 5, 1)
+    latest_end = datetime.date(2026, 5, 7)
+    scores = [score_window(window, earliest_start, latest_end) for window in valid_windows_one_to_seventh]
+    assert scores[0] > scores[1] > scores[2]
+
+def test_score_window_max_score():
+    earliest_start = datetime.date(2026, 5, 1)
+    latest_end = datetime.date(2026, 5, 7)
+    window = Window(
+        trip_id="trip1",
+        start_date=earliest_start,
+        end_date=datetime.date(2026, 5, 3),
+        total_days=3,
+        vacation_days_cost=0,
+        weekend_anchored=True,
+        overlaps_holiday=False)
+    assert score_window(window, earliest_start, latest_end) == 1.0
+
+def test_score_window_single_day_window():
+    date = datetime.date(2026, 5, 1)
+    window = Window(
+        trip_id="trip1",
+        start_date=date,
+        end_date=date,
+        total_days=1,
+        vacation_days_cost=1,
+        weekend_anchored=False,
+        overlaps_holiday=False)
+    score = score_window(window, date, date)
+    assert 0.0 <= score <= 1.0
+
+def test_rank_windows_pruning_and_sorting(small_constraints):
+    holidays = get_us_federal_holidays(small_constraints.year)
+    windows = generate_windows(small_constraints.trips[0], small_constraints, holidays)
+    ranked_windows = rank_windows(windows, small_constraints)
+    for window in ranked_windows:
+        assert window.vacation_days_cost <= small_constraints.vacation_days_remaining
+    for i in range(len(ranked_windows) - 1):
+        score_i = score_window(ranked_windows[i], small_constraints.earliest_start, small_constraints.latest_end)
+        score_next = score_window(ranked_windows[i + 1], small_constraints.earliest_start, small_constraints.latest_end)
+        assert score_i >= score_next
+
+def test_rank_windows_empty_input(small_constraints):
+    assert rank_windows([], small_constraints) == []
+
+def test_rank_windows_all_pruned(small_constraints):
+    # All windows exceed the budget
+    tight = SolverConstraints(**{**small_constraints.__dict__, "vacation_days_remaining": 0})
+    holidays = get_us_federal_holidays(small_constraints.year)
+    windows = generate_windows(small_constraints.trips[0], small_constraints, holidays)
+    # filter to only windows that would cost > 0
+    assert rank_windows(windows, tight) == []

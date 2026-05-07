@@ -87,24 +87,38 @@ def generate_windows(
 
     return windows
 
-def score_window(window: Window) -> float:
+def score_window(window: Window, earliest_start: datetime.date, latest_end: datetime.date) -> float:
     """Return a score between 0.0 and 1.0. Higher is better.
 
     Scoring components (weights are suggestions — tune as you see fit):
-    - Vacation efficiency (40%): vacation_days_cost / total_days, inverted
+    - Vacation efficiency (50%): vacation_days_cost / total_days, inverted
       so lower cost = higher score
-    - Weekend anchoring (35%): 1.0 if anchored, 0.0 if not
-    - Holiday overlap penalty (15%): -0.15 if overlaps a major holiday
+    - Weekend anchoring (40%): 1.0 if anchored, 0.0 if not
     - Lead time bonus (10%): earlier start dates score marginally higher
       (normalized within the search window)
 
     Clamp final score to [0.0, 1.0].
     """
+    vacation_efficiency = 1 - window.vacation_days_cost / window.total_days
+    weekend_score = 1.0 if window.weekend_anchored else 0.0
+    # For lead time, we can give a small bonus for starting earlier in the year
+    total_search_days = (latest_end - earliest_start).days + 1
+    lead_time_score = 1 - (window.start_date - earliest_start).days / total_search_days
+
+    raw_score = 0.5 * vacation_efficiency + 0.4 * weekend_score + 0.1 * lead_time_score
+    return max(0.0, min(1.0, raw_score))
 
 def rank_windows(windows: list[Window], constraints: SolverConstraints) -> list[Window]:
     """Attach scores to all windows and return them sorted descending by score.
     Also prune any windows whose vacation_days_cost exceeds
     constraints.vacation_days_remaining."""
+    scored_windows = []
+    for window in windows:
+        if window.vacation_days_cost <= constraints.vacation_days_remaining:
+            score = score_window(window, constraints.earliest_start, constraints.latest_end)
+            scored_windows.append((score, window))
+    scored_windows.sort(key=lambda x: x[0], reverse=True)
+    return [window for score, window in scored_windows]
 
 def _require(raw: dict[str, Any], field: str) -> Any:
     if field not in raw:
@@ -118,7 +132,7 @@ def parse_constraints(raw: dict) -> SolverConstraints:
         raise ValueError("vacation_days_remaining must be a non-negative integer")
 
     year = _require(raw, 'year')
-    if not isinstance(year, int) or isinstance(vacation_days_remaining, bool) or not 1900 < year < datetime.datetime.now().year + 10:
+    if not isinstance(year, int) or isinstance(year, bool) or not 1900 < year < datetime.datetime.now().year + 10:
         raise ValueError("year must be a valid year between 1900 and 10 years from now")
 
     trips_raw = _require(raw, 'trips')
@@ -142,7 +156,7 @@ def parse_constraints(raw: dict) -> SolverConstraints:
             raise ValueError(f"Trip {trip_id} must have a non-empty list of departure cities")
 
         min_duration_days = _require(trip_raw, 'min_duration_days')
-        if not isinstance(min_duration_days, int) or isinstance(vacation_days_remaining, bool) or min_duration_days <= 0:
+        if not isinstance(min_duration_days, int) or isinstance(min_duration_days, bool) or min_duration_days <= 0:
             raise ValueError(f"Trip {trip_id} must have a positive integer min_duration_days")
 
         trips.append(TripConstraint(id=trip_id, destination=destination, departure_cities=departure_cities, min_duration_days=min_duration_days))
@@ -175,7 +189,7 @@ def parse_constraints(raw: dict) -> SolverConstraints:
 
     max_trips = raw.get('max_trips')
     if max_trips is not None:
-        if not isinstance(max_trips, int) or isinstance(vacation_days_remaining, bool) or max_trips <= 0:
+        if not isinstance(max_trips, int) or isinstance(max_trips, bool) or max_trips <= 0:
             raise ValueError("max_trips must be a positive integer if provided")
 
     return SolverConstraints(
