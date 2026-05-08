@@ -532,3 +532,148 @@ def test_rank_windows_all_pruned(small_constraints):
     windows = generate_windows(small_constraints.trips[0], small_constraints, holidays)
     # filter to only windows that would cost > 0
     assert rank_windows(windows, tight) == []
+
+def test_find_non_overlapping_combinations_no_overlap():
+    windows_by_trip = {
+        "trip1": [Window(trip_id="trip1", start_date=datetime.date(2026, 5, 1), end_date=datetime.date(2026, 5, 5), total_days=5, vacation_days_cost=3, weekend_anchored=True, overlaps_holiday=False)],
+        "trip2": [Window(trip_id="trip2", start_date=datetime.date(2026, 6, 1), end_date=datetime.date(2026, 6, 5), total_days=5, vacation_days_cost=5, weekend_anchored=False, overlaps_holiday=False)],
+    }
+    result = find_non_overlapping_combinations(windows_by_trip, 10, [], datetime.date(2026, 5, 1), datetime.date(2026, 6, 30), [0])
+    assert len(result) == 1
+    assert {w.trip_id for w in result[0].windows} == {"trip1", "trip2"}
+
+def test_find_non_overlapping_combinations_with_overlap():
+    # trip1 and trip2 overlap, but trip2 has a second non-overlapping window
+    windows_by_trip = {
+        "trip1": [Window(trip_id="trip1", start_date=datetime.date(2026, 5, 1), end_date=datetime.date(2026, 5, 5), total_days=5, vacation_days_cost=3, weekend_anchored=True, overlaps_holiday=False)],
+        "trip2": [
+            Window(trip_id="trip2", start_date=datetime.date(2026, 5, 3), end_date=datetime.date(2026, 5, 7), total_days=5, vacation_days_cost=4, weekend_anchored=False, overlaps_holiday=False),  # overlaps trip1
+            Window(trip_id="trip2", start_date=datetime.date(2026, 6, 1), end_date=datetime.date(2026, 6, 5), total_days=5, vacation_days_cost=5, weekend_anchored=False, overlaps_holiday=False),  # no overlap
+        ],
+    }
+    result = find_non_overlapping_combinations(windows_by_trip, 10, [], datetime.date(2026, 5, 1), datetime.date(2026, 6, 30), [0])
+    assert len(result) == 1
+    trip2_window = next(w for w in result[0].windows if w.trip_id == "trip2")
+    assert trip2_window.start_date == datetime.date(2026, 6, 1)
+
+def test_find_non_overlapping_combinations_with_overlap_other_way():
+    # trip1 and trip2 overlap, but trip1 has a secondnon-overlapping window
+    windows_by_trip = {
+        "trip1": [Window(trip_id="trip1", start_date=datetime.date(2026, 5, 29), end_date=datetime.date(2026, 6, 1), total_days=4, vacation_days_cost=2, weekend_anchored=True, overlaps_holiday=False),
+                  Window(trip_id="trip1", start_date=datetime.date(2026, 5, 1), end_date=datetime.date(2026, 5, 5), total_days=5, vacation_days_cost=3, weekend_anchored=True, overlaps_holiday=False)], # overlaps trip2
+        "trip2": [Window(trip_id="trip2", start_date=datetime.date(2026, 6, 1), end_date=datetime.date(2026, 6, 5), total_days=5, vacation_days_cost=5, weekend_anchored=False, overlaps_holiday=False)],  # no overlap
+    }
+    result = find_non_overlapping_combinations(windows_by_trip, 10, [], datetime.date(2026, 5, 1), datetime.date(2026, 6, 30), [0])
+    assert len(result) == 1
+    trip1_window = next(w for w in result[0].windows if w.trip_id == "trip1")
+    assert trip1_window.start_date == datetime.date(2026, 5, 1)
+
+def test_find_non_overlapping_combinations_exceed_budget():
+    windows_by_trip = {
+        "trip1": [Window(trip_id="trip1", start_date=datetime.date(2026, 5, 1), end_date=datetime.date(2026, 5, 5), total_days=5, vacation_days_cost=3, weekend_anchored=True, overlaps_holiday=False)],
+        "trip2": [Window(trip_id="trip2", start_date=datetime.date(2026, 6, 1), end_date=datetime.date(2026, 6, 5), total_days=5, vacation_days_cost=5, weekend_anchored=False, overlaps_holiday=False)],
+    }
+    result = find_non_overlapping_combinations(windows_by_trip, 5, [], datetime.date(2026, 5, 1), datetime.date(2026, 6, 30), [0])
+    assert len(result) == 0
+
+def test_find_non_overlapping_combinations_caps_at_20():
+    windows_by_trip = {
+        "trip1": [Window(trip_id="trip1", start_date=datetime.date(2026, 5, 1), end_date=datetime.date(2026, 5, 5), total_days=5, vacation_days_cost=1, weekend_anchored=True, overlaps_holiday=False)],
+        "trip2": [Window(trip_id="trip2", start_date=datetime.date(2026, 6, 1), end_date=datetime.date(2026, 6, 5), total_days=5, vacation_days_cost=1, weekend_anchored=True, overlaps_holiday=False)],
+    }
+    existing_plans = [CombinedPlan(windows=[], total_vacation_days=0, total_score=0.0) for _ in range(20)]
+    result = find_non_overlapping_combinations(windows_by_trip, 10, existing_plans, datetime.date(2026, 5, 1), datetime.date(2026, 6, 30), [0])
+    assert len(result) <= 20
+
+def test_find_non_overlapping_combinations_empty_list():
+    windows_by_trip = {
+        "trip1": [Window(trip_id="trip1", start_date=datetime.date(2026, 5, 1), end_date=datetime.date(2026, 5, 5), total_days=5, vacation_days_cost=3, weekend_anchored=True, overlaps_holiday=False)],
+        "trip2": [],
+    }
+    result = find_non_overlapping_combinations(windows_by_trip, 5, [], datetime.date(2026, 5, 1), datetime.date(2026, 6, 30), [0])
+    assert len(result) == 0
+
+def test_find_non_overlapping_combinations_all_overlaps():
+    windows_by_trip = {
+        "trip1": [Window(trip_id="trip1", start_date=datetime.date(2026, 5, 1), end_date=datetime.date(2026, 5, 5), total_days=5, vacation_days_cost=3, weekend_anchored=True, overlaps_holiday=False),
+                  Window(trip_id="trip1", start_date=datetime.date(2026, 5,6), end_date=datetime.date(2026, 5, 8), total_days=3, vacation_days_cost=3, weekend_anchored=False, overlaps_holiday=False)],
+        "trip2": [Window(trip_id="trip2", start_date=datetime.date(2026, 4,30), end_date=datetime.date(2026, 5, 6), total_days=7, vacation_days_cost=5, weekend_anchored=False, overlaps_holiday=False),
+                  Window(trip_id="trip2", start_date=datetime.date(2026, 5,2), end_date=datetime.date(2026, 5, 7), total_days=6, vacation_days_cost=4, weekend_anchored=True, overlaps_holiday=False)],
+    }
+    result = find_non_overlapping_combinations(windows_by_trip, 20, [], datetime.date(2026, 5, 1), datetime.date(2026, 6, 30), [0])
+    assert len(result) == 0
+
+def test_find_non_overlapping_combinations_exact_budget():
+    windows_by_trip = {
+        "trip1": [Window(trip_id="trip1", start_date=datetime.date(2026, 5, 1), end_date=datetime.date(2026, 5, 5), total_days=5, vacation_days_cost=3, weekend_anchored=True, overlaps_holiday=False)],
+        "trip2": [Window(trip_id="trip2", start_date=datetime.date(2026, 6, 1), end_date=datetime.date(2026, 6, 5), total_days=5, vacation_days_cost=5, weekend_anchored=False, overlaps_holiday=False)],
+    }
+    result = find_non_overlapping_combinations(windows_by_trip, 8, [], datetime.date(2026, 5, 1), datetime.date(2026, 6, 30), [0])
+    assert len(result) == 1
+    assert {w.trip_id for w in result[0].windows} == {"trip1", "trip2"}
+
+def test_find_non_overlapping_combinations_multiple_valid():
+    # trip1 has 2 windows, trip2 has 2 windows, all 4 are mutually non-overlapping
+    # so the function should find 2 valid plans (first pair, then second pair)
+    windows_by_trip = {
+        "trip1": [
+            Window(trip_id="trip1", start_date=datetime.date(2026, 5, 1), end_date=datetime.date(2026, 5, 5), total_days=5, vacation_days_cost=3, weekend_anchored=True, overlaps_holiday=False),
+            Window(trip_id="trip1", start_date=datetime.date(2026, 7, 1), end_date=datetime.date(2026, 7, 5), total_days=5, vacation_days_cost=3, weekend_anchored=True, overlaps_holiday=False),
+        ],
+        "trip2": [
+            Window(trip_id="trip2", start_date=datetime.date(2026, 6, 1), end_date=datetime.date(2026, 6, 5), total_days=5, vacation_days_cost=3, weekend_anchored=False, overlaps_holiday=False),
+            Window(trip_id="trip2", start_date=datetime.date(2026, 8, 1), end_date=datetime.date(2026, 8, 5), total_days=5, vacation_days_cost=3, weekend_anchored=False, overlaps_holiday=False),
+        ],
+    }
+    result = find_non_overlapping_combinations(windows_by_trip, 20, [], datetime.date(2026, 5, 1), datetime.date(2026, 8, 31), [0])
+    assert len(result) == 2
+
+def test_find_non_overlapping_combinations_three_trips():
+    # All three trips are in different months — exactly one valid combination
+    windows_by_trip = {
+        "trip1": [Window(trip_id="trip1", start_date=datetime.date(2026, 5, 1), end_date=datetime.date(2026, 5, 5), total_days=5, vacation_days_cost=2, weekend_anchored=True, overlaps_holiday=False)],
+        "trip2": [Window(trip_id="trip2", start_date=datetime.date(2026, 6, 1), end_date=datetime.date(2026, 6, 5), total_days=5, vacation_days_cost=2, weekend_anchored=False, overlaps_holiday=False)],
+        "trip3": [Window(trip_id="trip3", start_date=datetime.date(2026, 7, 1), end_date=datetime.date(2026, 7, 5), total_days=5, vacation_days_cost=2, weekend_anchored=True, overlaps_holiday=False)],
+    }
+    result = find_non_overlapping_combinations(windows_by_trip, 10, [], datetime.date(2026, 5, 1), datetime.date(2026, 7, 31), [0])
+    assert len(result) == 1
+    assert {w.trip_id for w in result[0].windows} == {"trip1", "trip2", "trip3"}
+
+def test_solve_returns_ok_on_valid_input():
+    result = solve({
+        "vacation_days_remaining": 10,
+        "year": 2026,
+        "trips": [
+            {"id": "trip1", "destination": "Tokyo", "departure_cities": ["NYC"], "min_duration_days": 4},
+            {"id": "trip2", "destination": "Chicago", "departure_cities": ["NYC"], "min_duration_days": 4},
+        ],
+        "blackout_dates": [],
+        "earliest_start": "2026-05-01",
+        "latest_end": "2026-12-31"
+    })
+    assert result["status"] == "ok"
+
+def test_solve_returns_error_on_invalid_input():
+    result = solve({"vacation_days_remaining": "not a number", "year": 2026, "trips": [], "earliest_start": "2026-05-01", "latest_end": "2026-12-31"})
+    assert result["status"] == "error"
+    assert "message" in result
+
+def test_solve_end_to_end():
+    result = solve({
+        "vacation_days_remaining": 10,
+        "year": 2026,
+        "trips": [
+            {"id": "trip_nyc", "destination": "New York City", "departure_cities": ["SFO"], "min_duration_days": 4},
+            {"id": "trip_chicago", "destination": "Chicago", "departure_cities": ["SFO"], "min_duration_days": 4},
+        ],
+        "blackout_dates": [],
+        "earliest_start": "2026-05-01",
+        "latest_end": "2026-12-31"
+    })
+    assert result["status"] == "ok"
+    assert len(result["combined_plans"]) > 0
+    for plan in result["combined_plans"]:
+        dates = [(w["start_date"], w["end_date"]) for w in plan["windows"]]
+        for i in range(len(dates)):
+            for j in range(i + 1, len(dates)):
+                assert not (dates[i][0] <= dates[j][1] and dates[j][0] <= dates[i][1])
