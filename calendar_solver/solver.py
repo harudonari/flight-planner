@@ -57,10 +57,8 @@ def solve(constraints: dict, config: dict = {}) -> dict:
             windows_count += len(windows)
             reranked = rank_windows(windows, parsed_constraints)
             windows_by_trip[trip.id] = reranked
-        
-        combined_plan = []
-        combinations_evaluated = [0]
-        find_non_overlapping_combinations(windows_by_trip, parsed_constraints.vacation_days_remaining, combined_plan, parsed_constraints.earliest_start, parsed_constraints.latest_end, combinations_evaluated)
+
+        combined_plan, combinations_evaluated = find_non_overlapping_combinations(windows_by_trip, parsed_constraints.vacation_days_remaining)
         return {
             "status": "ok",
             "trips": {
@@ -99,7 +97,7 @@ def solve(constraints: dict, config: dict = {}) -> dict:
             ],
             "metadata": {
                 "total_windows_generated": windows_count,
-                "combinations_evaluated": combinations_evaluated[0],
+                "combinations_evaluated": combinations_evaluated,
                 "combinations_returned": len(combined_plan)
             }
         }
@@ -110,7 +108,63 @@ def solve(constraints: dict, config: dict = {}) -> dict:
             "message": str(e)
         }
 
+def _overlaps_any(candidate: Window, selected: list[Window]) -> bool:
+    for window in selected:
+        if candidate.start_date <= window.end_date and window.start_date <= candidate.end_date:
+            return True
+    return False
+
 def find_non_overlapping_combinations(
+    windows_by_trip: dict[str, list[Window]],
+    vacation_days_remaining: int
+) -> tuple[list[CombinedPlan], int]:
+    """Find all combinations of windows (one per trip) where:
+    - No two windows overlap in calendar dates
+    - Combined vacation_days_cost <= vacation_days_remaining
+    Return combinations sorted by total_score descending.
+    Cap output at 20 combinations to keep response size reasonable."""
+
+    trip_ids = list(windows_by_trip.keys())
+    all_plans = []
+    current_selection = []
+    combinations_evaluated = 0
+
+    def backtrack(trip_index: int, budget_remaining: int):
+        nonlocal combinations_evaluated # nonlocal keyword tells Python to use the variable found in the nearest enclosing scope
+        if trip_index == len(trip_ids):
+            combinations_evaluated += 1
+            # a window is chosen for all trips, meaning a valid plan
+            total_score = sum(window.score or 0.0 for window in current_selection) / len(current_selection)
+            total_days = sum(window.vacation_days_cost for window in current_selection)
+
+            if len(all_plans) < 20 or total_score > all_plans[-1].total_score:
+                all_plans.append(CombinedPlan(
+                    windows=list(current_selection),
+                    total_vacation_days=total_days,
+                    total_score=total_score
+                ))
+                all_plans.sort(key=lambda p: p.total_score, reverse=True)
+                if len(all_plans) > 20:
+                    all_plans.pop() # drop the lowest scoring window
+            return
+        
+        trip_id = trip_ids[trip_index]
+        for window in windows_by_trip[trip_id]:
+            if window.vacation_days_cost > budget_remaining: # window not valid, move on to next
+                continue
+            if _overlaps_any(window, current_selection): # window not valid, move on to next
+                continue
+        
+            current_selection.append(window)
+            backtrack(trip_index + 1, vacation_days_remaining - window.vacation_days_cost)
+            current_selection.pop()  # all of trip_index+1 trip is checked, check the next window for trip_index trip
+
+    backtrack(0, vacation_days_remaining)
+
+    return all_plans, combinations_evaluated
+
+
+def find_non_overlapping_combinations_recursion(
     windows_by_trip: dict[str, list[Window]],
     vacation_days_remaining: int,
     combined_plans: list[CombinedPlan],
@@ -123,6 +177,7 @@ def find_non_overlapping_combinations(
     - Combined vacation_days_cost <= vacation_days_remaining
     Return combinations sorted by total_score descending.
     Cap output at 20 combinations to keep response size reasonable."""
+
 
     # base case: 20 combinations already in the list
     if len(combined_plans) >= 20:
@@ -147,11 +202,11 @@ def find_non_overlapping_combinations(
         if a.start_date <= b.end_date and b.start_date <= a.end_date:
             # Remove the overlapped window from a and call the function
             new_dict_a = {key: (value[1:] if key == a.trip_id else value) for key, value in windows_by_trip.items()}
-            find_non_overlapping_combinations(new_dict_a, vacation_days_remaining, combined_plans, earliest_start, latest_end, combinations_evaluated)
+            find_non_overlapping_combinations_recursion(new_dict_a, vacation_days_remaining, combined_plans, earliest_start, latest_end, combinations_evaluated)
 
             # Remove the overlapped window from b and call the function
             new_dict_b = {key: (value[1:] if key == b.trip_id else value) for key, value in windows_by_trip.items()}
-            find_non_overlapping_combinations(new_dict_b, vacation_days_remaining, combined_plans, earliest_start, latest_end, combinations_evaluated)
+            find_non_overlapping_combinations_recursion(new_dict_b, vacation_days_remaining, combined_plans, earliest_start, latest_end, combinations_evaluated)
 
             return combined_plans
 
@@ -169,7 +224,7 @@ def find_non_overlapping_combinations(
     # Move on to the next iteration of score calculating by removing the first items in all of the windows list
     new_dict = {key: value[1:] for key, value in windows_by_trip.items()}
     vacation_days_remaining_updated = vacation_days_remaining - vacation_days_cost_total
-    find_non_overlapping_combinations(new_dict, vacation_days_remaining_updated, combined_plans, earliest_start, latest_end, combinations_evaluated)
+    find_non_overlapping_combinations_recursion(new_dict, vacation_days_remaining_updated, combined_plans, earliest_start, latest_end, combinations_evaluated)
 
     return combined_plans
 
