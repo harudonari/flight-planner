@@ -104,8 +104,9 @@ class TripPlannerAgent:
         self.system_prompt = """You are a helpful travel planning assistant.
             Your job is to help users plan trips efficiently using their available vacation days.
 
-            When a user describes their trip goals, extract their constraints and call the
-            calendar_solver tool to find the best date windows. Then present the top 3
+            When a user describes their trip goals, first acknolwedge the request then extract
+            their constraints and describe the plan you will search for. If user agrees with the described plan, 
+            call the calendar_solver tool to find the best date windows. Then present the top 3
             combined plans clearly, highlighting:
             - The dates for each trip
             - How many vacation days each plan uses
@@ -188,78 +189,9 @@ class TripPlannerAgent:
         })
         return response.content[0].text
 
-def run_tool_cycle(user_message: str) -> str:
-    """Send a message to Claude with the solver tool available.
-    Handle the tool call/result cycle and return Claude's final text response.
-
-    Steps:
-    1. Send the user message to Claude with tools=[SOLVER_TOOL]
-    2. If stop_reason == "tool_use":
-       a. Find the ToolUseBlock in response.content
-       b. Call solve(tool_use_block.input)
-       c. Send the result back as a tool_result message
-       d. Get Claude's final response
-    3. Return the final text response
-    """
-    response = client.messages.create(
-        model="claude-haiku-4-5",
-        max_tokens=1024,
-        tools=[SOLVER_TOOL],
-        messages=[
-            {
-                "role": "user",
-                "content": user_message
-            }
-        ]
-    )
-    if response.stop_reason == "tool_use":
-        tool_use = next(block for block in response.content if block.type == "tool_use")
-        solver_result = solve(tool_use.input)
-
-        follow_up = client.messages.create(
-            model="claude-haiku-4-5",
-            max_tokens=1024,
-            tools=[SOLVER_TOOL],
-            messages=[
-                {
-                    "role": "user",
-                    "content": user_message
-                },
-                {
-                    "role": "assistant",
-                    "content": response.content
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tool_use.id,
-                            "content": json.dumps(solver_result)
-                        }
-                    ]
-                }
-            ]
-        )
-        return follow_up.content[0].text
-    
-    return response.content[0].text
-
-def ask_claude(user_message: str) -> str:
-    """Send a single message to Claude and return its text response.
-    Use model="claude-sonnet-4-20250514" and max_tokens=1024."""
-
-    message = client.messages.create(
-        model="claude-haiku-4-5",
-        max_tokens=1024,
-        messages=[
-            {
-                "role": "user",
-                "content": user_message
-            }
-        ]
-    )
-    return message
+def call_api(prompt: str, options: dict, context: dict) -> dict:
+    agent = TripPlannerAgent()
+    return {"output": agent.chat(prompt)}
 
 if __name__ == "__main__":
     agent = TripPlannerAgent()
