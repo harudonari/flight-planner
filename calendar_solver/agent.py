@@ -53,6 +53,49 @@ SOLVER_TOOL = {
     }
 }
 
+def format_solver_error_for_claude(error_result: dict) -> str:
+    """Given a solve() result with status='error', return a clear message
+    to send back as the tool_result so Claude knows what went wrong and
+    can correct its input.
+
+    Example output:
+    'The calendar_solver returned an error: Missing required field: earliest_start.
+    Please call the tool again with all required fields included.'
+    """
+    error = error_result["message"]
+    return f"The calendar_solver returned an error: {error}. Please call the tool again with correct fields included."
+
+def format_top_plans(solver_result: dict, n: int = 3) -> str:
+    """Given a successful solve() result, format the top N combined plans
+    as a compact readable string to include in the tool_result sent to Claude.
+    This reduces token usage compared to sending the full raw JSON.
+
+    Example output:
+    Top 3 plans:
+    Plan 1 (score: 0.91, vacation days: 3):
+      trip_nyc:     2026-05-15 → 2026-05-18  [weekend ✓]  cost: 1d
+      trip_chicago: 2026-06-19 → 2026-06-22  [weekend ✓]  cost: 1d
+      trip_seattle: 2026-07-10 → 2026-07-13  [weekend ✓]  cost: 1d
+    ...
+    """
+    available_plans = n if solver_result["metadata"]["combinations_returned"] >= n else solver_result["metadata"]["combinations_returned"]
+    result = [f"Top {available_plans} plans:"]
+    plans = solver_result["combined_plans"]
+    for i in range(available_plans):
+        plan = plans[i]
+        formatted = [f"Plan {i+1} (score: {round(plan["total_score"], 2)}, vacation days: {plan["total_vacation_days"]}):"]
+
+        for window in plan["windows"]:
+            weekend = "[weekend ✓]" if window["weekend_anchored"] else "[weekend x]"
+            holiday = "[holiday ✓]" if window["overlaps_holiday"] else "[holiday x]"
+            trip = f"{window["trip_id"]}: {window["start_date"]} →  {window["end_date"]} {weekend} {holiday} cost: {window["vacation_days_cost"]} days score: {round(window["score"], 2)}"
+            formatted.append(trip)
+
+        result.extend(formatted)
+    
+    return "\n".join(result)
+
+
 class TripPlannerAgent:
     """Stateful agent that maintains conversation history across turns."""
 
@@ -109,13 +152,19 @@ class TripPlannerAgent:
             # call the tool
             tool_use = next(block for block in response.content if block.type == "tool_use")
             solver_result = solve(tool_use.input)
+
+            if solver_result["status"] == "error":
+                tool_result = format_solver_error_for_claude(solver_result)
+            else:
+                tool_result = format_top_plans(solver_result)
+
             self.history.append({
                 "role": "user",
                 "content": [
                             {
                                 "type": "tool_result",
                                 "tool_use_id": tool_use.id,
-                                "content": json.dumps(solver_result)
+                                "content": tool_result
                             }
                         ]
             })

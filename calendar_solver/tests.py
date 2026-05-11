@@ -2,6 +2,7 @@
 import pytest
 import datetime
 from solver import *
+from agent import *
 
 
 @pytest.fixture
@@ -706,3 +707,418 @@ def test_solve_end_to_end():
         for i in range(len(dates)):
             for j in range(i + 1, len(dates)):
                 assert not (dates[i][0] <= dates[j][1] and dates[j][0] <= dates[i][1])
+
+# agent.py testing
+def test_format_solver_error_for_claude_include_error():
+    result = solve({"vacation_days_remaining": "not a number", "year": 2026, "trips": [], "earliest_start": "2026-05-01", "latest_end": "2026-12-31"})
+    error_message = result["message"]
+    formatted = format_solver_error_for_claude(result)
+    assert error_message in formatted
+
+def test_format_top_plans_n_plan_available():
+    result = {
+        "status": "ok",
+        "trips": {
+            "trip_nyc": [
+                {
+                    "trip_id": "trip_nyc",
+                    "start_date": "2026-5-01",
+                    "end_date": "2026-05-05",
+                    "vacation_days_cost": 3,
+                    "weekend_anchored": True,
+                    "overlaps_holiday": False,
+                    "score": 0.8634523
+                },
+                {
+                    "trip_id": "trip_nyc",
+                    "start_date": "2026-6-01",
+                    "end_date": "2026-06-05",
+                    "vacation_days_cost": 4,
+                    "weekend_anchored": False,
+                    "overlaps_holiday": False,
+                    "score": 0.826452
+                }
+            ],
+            "trip_lax": [
+                {
+                    "trip_id": "trip_lax",
+                    "start_date": "2026-7-01",
+                    "end_date": "2026-07-05",
+                    "vacation_days_cost": 2,
+                    "weekend_anchored": True,
+                    "overlaps_holiday": True,
+                    "score": 0.96352
+                },
+                {
+                    "trip_id": "trip_lax",
+                    "start_date": "2026-8-01",
+                    "end_date": "2026-08-05",
+                    "vacation_days_cost": 4,
+                    "weekend_anchored": False,
+                    "overlaps_holiday": False,
+                    "score": 0.826452
+                }
+            ]
+        },
+        "combined_plans": [
+            {
+                "windows": [
+                    {
+                    "trip_id": "trip_nyc",
+                    "start_date": "2026-6-01",
+                    "end_date": "2026-06-05",
+                    "vacation_days_cost": 4,
+                    "weekend_anchored": False,
+                    "overlaps_holiday": False,
+                    "score": 0.826452
+                    },
+                    {
+                        "trip_id": "trip_lax",
+                        "start_date": "2026-7-01",
+                        "end_date": "2026-07-05",
+                        "vacation_days_cost": 2,
+                        "weekend_anchored": True,
+                        "overlaps_holiday": True,
+                        "score": 0.96352
+                    },
+                ],
+                "total_vacation_days": 6,
+                "total_score": 0.9653
+            },
+            {
+                "windows": [
+                    {
+                    "trip_id": "trip_nyc",
+                    "start_date": "2026-5-01",
+                    "end_date": "2026-05-05",
+                    "vacation_days_cost": 3,
+                    "weekend_anchored": True,
+                    "overlaps_holiday": False,
+                    "score": 0.8634523
+                    },
+                    {
+                        "trip_id": "trip_lax",
+                        "start_date": "2026-8-01",
+                        "end_date": "2026-08-05",
+                        "vacation_days_cost": 4,
+                        "weekend_anchored": False,
+                        "overlaps_holiday": False,
+                        "score": 0.826452
+                    }   
+                ],
+                "total_vacation_days": 7,
+                "total_score": 0.7533
+            },
+            {
+                "windows": [
+                    {
+                    "trip_id": "trip_nyc",
+                    "start_date": "2026-5-01",
+                    "end_date": "2026-05-05",
+                    "vacation_days_cost": 3,
+                    "weekend_anchored": True,
+                    "overlaps_holiday": False,
+                    "score": 0.8634523
+                    },
+                    {
+                        "trip_id": "trip_lax",
+                        "start_date": "2026-7-01",
+                        "end_date": "2026-07-05",
+                        "vacation_days_cost": 2,
+                        "weekend_anchored": True,
+                        "overlaps_holiday": True,
+                        "score": 0.96352
+                    },
+                ],
+                "total_vacation_days": 5,
+                "total_score": 0.9653
+            },
+            {
+                "windows": [
+                    {
+                    "trip_id": "trip_nyc",
+                    "start_date": "2026-5-01",
+                    "end_date": "2026-05-05",
+                    "vacation_days_cost": 3,
+                    "weekend_anchored": True,
+                    "overlaps_holiday": False,
+                    "score": 0.8634523
+                    },
+                    {
+                        "trip_id": "trip_lax",
+                        "start_date": "2026-8-01",
+                        "end_date": "2026-08-05",
+                        "vacation_days_cost": 4,
+                        "weekend_anchored": False,
+                        "overlaps_holiday": False,
+                        "score": 0.826452
+                    } 
+                ],
+                "total_vacation_days": 7,
+                "total_score": 0.77434
+            },
+
+        ],
+        "metadata": {
+                "total_windows_generated": 4,
+                "combinations_evaluated": 4,
+                "combinations_returned": 4
+        }
+    }
+    formatted = format_top_plans(result, 2)
+    assert "Top 2 plans" in formatted
+    assert "Plan 1" in formatted
+    assert "Plan 2" in formatted
+    assert not "Plan 3" in formatted
+
+def test_format_top_plans_fewer_than_n_plan_available():
+    result = {
+        "status": "ok",
+        "trips": {
+            "trip_nyc": [
+                {
+                    "trip_id": "trip_nyc",
+                    "start_date": "2026-5-01",
+                    "end_date": "2026-05-05",
+                    "vacation_days_cost": 3,
+                    "weekend_anchored": True,
+                    "overlaps_holiday": False,
+                    "score": 0.8634523
+                },
+                {
+                    "trip_id": "trip_nyc",
+                    "start_date": "2026-6-01",
+                    "end_date": "2026-06-05",
+                    "vacation_days_cost": 4,
+                    "weekend_anchored": False,
+                    "overlaps_holiday": False,
+                    "score": 0.826452
+                }
+            ],
+            "trip_lax": [
+                {
+                    "trip_id": "trip_lax",
+                    "start_date": "2026-7-01",
+                    "end_date": "2026-07-05",
+                    "vacation_days_cost": 2,
+                    "weekend_anchored": True,
+                    "overlaps_holiday": True,
+                    "score": 0.96352
+                },
+                {
+                    "trip_id": "trip_lax",
+                    "start_date": "2026-8-01",
+                    "end_date": "2026-08-05",
+                    "vacation_days_cost": 4,
+                    "weekend_anchored": False,
+                    "overlaps_holiday": False,
+                    "score": 0.826452
+                }
+            ]
+        },
+        "combined_plans": [
+            {
+                "windows": [
+                    {
+                    "trip_id": "trip_nyc",
+                    "start_date": "2026-6-01",
+                    "end_date": "2026-06-05",
+                    "vacation_days_cost": 4,
+                    "weekend_anchored": False,
+                    "overlaps_holiday": False,
+                    "score": 0.826452
+                    },
+                    {
+                        "trip_id": "trip_lax",
+                        "start_date": "2026-7-01",
+                        "end_date": "2026-07-05",
+                        "vacation_days_cost": 2,
+                        "weekend_anchored": True,
+                        "overlaps_holiday": True,
+                        "score": 0.96352
+                    },
+                ],
+                "total_vacation_days": 6,
+                "total_score": 0.9653
+            },
+            {
+                "windows": [
+                    {
+                    "trip_id": "trip_nyc",
+                    "start_date": "2026-5-01",
+                    "end_date": "2026-05-05",
+                    "vacation_days_cost": 3,
+                    "weekend_anchored": True,
+                    "overlaps_holiday": False,
+                    "score": 0.8634523
+                    },
+                    {
+                        "trip_id": "trip_lax",
+                        "start_date": "2026-8-01",
+                        "end_date": "2026-08-05",
+                        "vacation_days_cost": 4,
+                        "weekend_anchored": False,
+                        "overlaps_holiday": False,
+                        "score": 0.826452
+                    }   
+                ],
+                "total_vacation_days": 7,
+                "total_score": 0.7533
+            },
+            {
+                "windows": [
+                    {
+                    "trip_id": "trip_nyc",
+                    "start_date": "2026-5-01",
+                    "end_date": "2026-05-05",
+                    "vacation_days_cost": 3,
+                    "weekend_anchored": True,
+                    "overlaps_holiday": False,
+                    "score": 0.8634523
+                    },
+                    {
+                        "trip_id": "trip_lax",
+                        "start_date": "2026-7-01",
+                        "end_date": "2026-07-05",
+                        "vacation_days_cost": 2,
+                        "weekend_anchored": True,
+                        "overlaps_holiday": True,
+                        "score": 0.96352
+                    },
+                ],
+                "total_vacation_days": 5,
+                "total_score": 0.9653
+            },
+            {
+                "windows": [
+                    {
+                    "trip_id": "trip_nyc",
+                    "start_date": "2026-5-01",
+                    "end_date": "2026-05-05",
+                    "vacation_days_cost": 3,
+                    "weekend_anchored": True,
+                    "overlaps_holiday": False,
+                    "score": 0.8634523
+                    },
+                    {
+                        "trip_id": "trip_lax",
+                        "start_date": "2026-8-01",
+                        "end_date": "2026-08-05",
+                        "vacation_days_cost": 4,
+                        "weekend_anchored": False,
+                        "overlaps_holiday": False,
+                        "score": 0.826452
+                    } 
+                ],
+                "total_vacation_days": 7,
+                "total_score": 0.77434
+            },
+
+        ],
+        "metadata": {
+                "total_windows_generated": 4,
+                "combinations_evaluated": 4,
+                "combinations_returned": 4
+        }
+    }
+    formatted = format_top_plans(result, 5)
+    assert "Top 4 plans" in formatted
+    assert "Plan 1" in formatted
+    assert "Plan 2" in formatted
+    assert "Plan 3" in formatted
+    assert "Plan 4" in formatted
+
+def test_format_top_plans_weekend_anchored_marking():
+    result = {
+        "status": "ok",
+        "trips": {},
+        "combined_plans": [
+            {
+                "windows": [
+                    {
+                        "trip_id": "trip_nyc",
+                        "start_date": "2026-05-01",
+                        "end_date": "2026-05-05",
+                        "vacation_days_cost": 3,
+                        "weekend_anchored": True,
+                        "overlaps_holiday": False,
+                        "score": 0.9
+                    },
+                    {
+                        "trip_id": "trip_lax",
+                        "start_date": "2026-06-01",
+                        "end_date": "2026-06-05",
+                        "vacation_days_cost": 3,
+                        "weekend_anchored": False,
+                        "overlaps_holiday": False,
+                        "score": 0.7
+                    }
+                ],
+                "total_vacation_days": 6,
+                "total_score": 0.8
+            }
+        ],
+        "metadata": {
+            "total_windows_generated": 2,
+            "combinations_evaluated": 1,
+            "combinations_returned": 1
+        }
+    }
+    formatted = format_top_plans(result, 1)
+    lines = formatted.splitlines()
+    nyc_line = next(l for l in lines if "trip_nyc" in l)
+    lax_line = next(l for l in lines if "trip_lax" in l)
+    assert "[weekend ✓]" in nyc_line
+    assert "[weekend x]" in lax_line
+
+def test_format_top_plans_weekend_anchored_marking():
+    result = {
+        "status": "ok",
+        "trips": {},
+        "combined_plans": [
+            {
+                "windows": [
+                    {
+                        "trip_id": "trip_nyc",
+                        "start_date": "2026-05-01",
+                        "end_date": "2026-05-05",
+                        "vacation_days_cost": 3,
+                        "weekend_anchored": True,
+                        "overlaps_holiday": True,
+                        "score": 0.9
+                    },
+                    {
+                        "trip_id": "trip_lax",
+                        "start_date": "2026-06-01",
+                        "end_date": "2026-06-05",
+                        "vacation_days_cost": 3,
+                        "weekend_anchored": False,
+                        "overlaps_holiday": False,
+                        "score": 0.7
+                    }
+                ],
+                "total_vacation_days": 6,
+                "total_score": 0.8
+            }
+        ],
+        "metadata": {
+            "total_windows_generated": 2,
+            "combinations_evaluated": 1,
+            "combinations_returned": 1
+        }
+    }
+    formatted = format_top_plans(result, 1)
+    lines = formatted.splitlines()
+    nyc_line = next(l for l in lines if "trip_nyc" in l)
+    lax_line = next(l for l in lines if "trip_lax" in l)
+    assert "[holiday ✓]" in nyc_line
+    assert "[holiday x]" in lax_line
+
+
+
+
+
+
+
+
+
