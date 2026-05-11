@@ -1,0 +1,29 @@
+# promptfoo.yaml — minimal smoke test
+description: "Flight Planner constraint extraction — smoke test"
+
+prompts:
+  - "{{question}}"
+
+providers:
+  - id: python:../agent.py
+    config:
+      max_tokens: 1024
+
+tests:
+  - description: "Basic single trip"
+    vars:
+      question: "I have 5 vacation days and want to visit Tokyo for at least 4 days in 2026, flying from SFO between June and September."
+    assert:
+      - type: contains
+        value: "Tokyo"
+      - type: contains
+        value: "SFO"
+      - type: llm-rubric
+        value: "The response should acknowledge the trip request and either ask for clarification or describe the plan it will search for."
+
+  - description: "Budget acknowledgement"
+    vars:
+      question: "I only have 3 vacation days left this year."
+    assert:
+      - type: llm-rubric
+        value: "The response should acknowledge the limited vacation budget of 3 days."
