@@ -1071,7 +1071,7 @@ def test_format_top_plans_weekend_anchored_marking():
     assert "[weekend ✓]" in nyc_line
     assert "[weekend x]" in lax_line
 
-def test_format_top_plans_weekend_anchored_marking():
+def test_format_top_plans_holiday_anchored_marking():
     result = {
         "status": "ok",
         "trips": {},
