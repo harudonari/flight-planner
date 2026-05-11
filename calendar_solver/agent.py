@@ -100,7 +100,7 @@ class TripPlannerAgent:
     """Stateful agent that maintains conversation history across turns."""
 
     def __init__(self):
-        self.history: list[dict] = []
+        self.history: list = []
         self.system_prompt = """You are a helpful travel planning assistant.
             Your job is to help users plan trips efficiently using their available vacation days.
 
@@ -140,7 +140,7 @@ class TripPlannerAgent:
         response = client.messages.create(
         model=self.model,
         max_tokens=self.max_tokens,
-        tools=[SOLVER_TOOL],
+        tools=[SOLVER_TOOL],  # type: ignore[arg-type]
         messages=self.history)
 
         if response.stop_reason == "tool_use":  # tool use requested
@@ -173,7 +173,7 @@ class TripPlannerAgent:
             follow_up = client.messages.create(
                 model=self.model,
                 max_tokens=self.max_tokens,
-                tools=[SOLVER_TOOL],
+                tools=[SOLVER_TOOL],  # type: ignore[arg-type]
                 messages=self.history
             )
 
@@ -181,13 +181,13 @@ class TripPlannerAgent:
                 "role": "assistant",
                 "content": follow_up.content
             })
-            return follow_up.content[0].text
+            return follow_up.content[0].text  # type: ignore[union-attr]
     
         self.history.append({
             "role": "assistant",
             "content": response.content
         })
-        return response.content[0].text
+        return response.content[0].text  # type: ignore[union-attr]
 
 def call_api(prompt: str, options: dict, context: dict) -> dict:
     agent = TripPlannerAgent()
